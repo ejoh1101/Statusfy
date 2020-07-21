@@ -62,7 +62,7 @@ static NSString * const SFYPlayerDockIconPreferenceKey = @"ShowPlayerDockIcon";
     }
     else {
         if (trackName && artistName) {
-            NSString *titleText = [NSString stringWithFormat:@"%@ - %@ ♪", trackName, artistName];
+            NSString *titleText = [NSString stringWithFormat:@"%@ - %@", trackName, artistName];
 
             if ([self getPlayerStateVisibility]) {
                 NSString *playerState = [self determinePlayerStateText];
