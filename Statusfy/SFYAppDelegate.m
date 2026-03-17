@@ -12,6 +12,8 @@
 static NSString * const SFYPlayerStatePreferenceKey = @"ShowPlayerState";
 static NSString * const SFYHideIfNotPlayingKey = @"HideIfNotPlaying";
 static NSString * const SFYPlayerDockIconPreferenceKey = @"ShowPlayerDockIcon";
+static NSString * const SFYSpotifyApplicationName = @"Spotify";
+static NSString * const SFYMusicApplicationName = @"Music";
 
 @interface SFYAppDelegate ()
 
@@ -54,10 +56,16 @@ static NSString * const SFYPlayerDockIconPreferenceKey = @"ShowPlayerDockIcon";
 
 - (void)setStatusItemTitle
 {
-    NSString *trackName = [[self executeAppleScript:@"get name of current track"] stringValue];
-    NSString *artistName = [[self executeAppleScript:@"get artist of current track"] stringValue];
+    NSString *activeApplicationName = [self activePlayerApplicationName];
+    if (!activeApplicationName) {
+        [self showIconAndHideText];
+        return;
+    }
+
+    NSString *trackName = [[self executeAppleScript:@"get name of current track" forApplication:activeApplicationName] stringValue];
+    NSString *artistName = [[self executeAppleScript:@"get artist of current track" forApplication:activeApplicationName] stringValue];
     
-    if ([self getHideIfNotPlaying] && ![self checkIfIsPlaying]) {
+    if ([self getHideIfNotPlaying] && ![self checkIfIsPlayingForApplication:activeApplicationName]) {
         [self showIconAndHideText];
     }
     else {
@@ -65,7 +73,7 @@ static NSString * const SFYPlayerDockIconPreferenceKey = @"ShowPlayerDockIcon";
             NSString *titleText = [NSString stringWithFormat:@"%@ - %@", trackName, artistName];
 
             if ([self getPlayerStateVisibility]) {
-                NSString *playerState = [self determinePlayerStateText];
+                NSString *playerState = [self determinePlayerStateTextForApplication:activeApplicationName];
                 titleText = [NSString stringWithFormat:@"%@ (%@)", titleText, playerState];
             }
 
@@ -94,10 +102,63 @@ static NSString * const SFYPlayerDockIconPreferenceKey = @"ShowPlayerDockIcon";
 
 - (NSAppleEventDescriptor *)executeAppleScript:(NSString *)command
 {
-    command = [NSString stringWithFormat:@"if application \"Spotify\" is running then tell application \"Spotify\" to %@", command];
+    return [self executeAppleScript:command forApplication:SFYSpotifyApplicationName];
+}
+
+- (NSAppleEventDescriptor *)executeAppleScript:(NSString *)command forApplication:(NSString *)applicationName
+{
+    command = [NSString stringWithFormat:@"if application \"%@\" is running then tell application \"%@\" to %@", applicationName, applicationName, command];
     NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:command];
     NSAppleEventDescriptor *eventDescriptor = [appleScript executeAndReturnError:NULL];
     return eventDescriptor;
+}
+
+#pragma mark - Player detection
+
+- (BOOL)isApplicationRunning:(NSString *)applicationName
+{
+    NSString *command = [NSString stringWithFormat:@"application \"%@\" is running", applicationName];
+    NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:command];
+    NSAppleEventDescriptor *eventDescriptor = [appleScript executeAndReturnError:NULL];
+    return [eventDescriptor booleanValue];
+}
+
+- (NSString *)playerStateConstantForApplication:(NSString *)applicationName
+{
+    return [[self executeAppleScript:@"get player state" forApplication:applicationName] stringValue];
+}
+
+- (BOOL)playerStateRepresentsPlaying:(NSString *)playerStateConstant
+{
+    if (!playerStateConstant) {
+        return NO;
+    }
+
+    return [playerStateConstant isEqualToString:@"kPSP"] || [playerStateConstant caseInsensitiveCompare:@"playing"] == NSOrderedSame;
+}
+
+- (NSString *)activePlayerApplicationName
+{
+    BOOL spotifyRunning = [self isApplicationRunning:SFYSpotifyApplicationName];
+    BOOL musicRunning = [self isApplicationRunning:SFYMusicApplicationName];
+
+    if (spotifyRunning && [self checkIfIsPlayingForApplication:SFYSpotifyApplicationName]) {
+        return SFYSpotifyApplicationName;
+    }
+
+    if (musicRunning && [self checkIfIsPlayingForApplication:SFYMusicApplicationName]) {
+        return SFYMusicApplicationName;
+    }
+
+    if (spotifyRunning) {
+        return SFYSpotifyApplicationName;
+    }
+
+    if (musicRunning) {
+        return SFYMusicApplicationName;
+    }
+
+    return nil;
 }
 
 #pragma mark - Player state
@@ -125,25 +186,45 @@ static NSString * const SFYPlayerDockIconPreferenceKey = @"ShowPlayerDockIcon";
 
 - (BOOL)checkIfIsPlaying
 {
-    NSString *playerStateConstant = [[self executeAppleScript:@"get player state"] stringValue];
-    return [playerStateConstant isEqualToString:@"kPSP"];
+    NSString *activeApplicationName = [self activePlayerApplicationName];
+    if (!activeApplicationName) {
+        return NO;
+    }
+
+    return [self checkIfIsPlayingForApplication:activeApplicationName];
+}
+
+- (BOOL)checkIfIsPlayingForApplication:(NSString *)applicationName
+{
+    NSString *playerStateConstant = [self playerStateConstantForApplication:applicationName];
+    return [self playerStateRepresentsPlaying:playerStateConstant];
 }
 
 - (NSString *)determinePlayerStateText
 {
+    NSString *activeApplicationName = [self activePlayerApplicationName];
+    if (!activeApplicationName) {
+        return NSLocalizedString(@"Stopped", nil);
+    }
+
+    return [self determinePlayerStateTextForApplication:activeApplicationName];
+}
+
+- (NSString *)determinePlayerStateTextForApplication:(NSString *)applicationName
+{
     NSString *playerStateText = nil;
-    NSString *playerStateConstant = [[self executeAppleScript:@"get player state"] stringValue];
-    
-    if ([playerStateConstant isEqualToString:@"kPSP"]) {
+    NSString *playerStateConstant = [self playerStateConstantForApplication:applicationName];
+
+    if ([playerStateConstant isEqualToString:@"kPSP"] || [playerStateConstant caseInsensitiveCompare:@"playing"] == NSOrderedSame) {
         playerStateText = NSLocalizedString(@"Playing", nil);
     }
-    else if ([playerStateConstant isEqualToString:@"kPSp"]) {
+    else if ([playerStateConstant isEqualToString:@"kPSp"] || [playerStateConstant caseInsensitiveCompare:@"paused"] == NSOrderedSame) {
         playerStateText = NSLocalizedString(@"Paused", nil);
     }
     else {
         playerStateText = NSLocalizedString(@"Stopped", nil);
     }
-    
+
     return playerStateText;
 }
 
